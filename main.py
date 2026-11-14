@@ -1,7 +1,8 @@
-import os, io, asyncio, re
+import os, io, asyncio, re, threading
 from datetime import datetime, timedelta
 from PIL import Image
 from dotenv import load_dotenv
+from flask import Flask
 from telegram import Update
 from telegram.ext import Application, MessageHandler, filters, ContextTypes
 from post import post_carousel_to_instagram
@@ -13,6 +14,16 @@ PROMPT = "Write a SHORT Roopkatha style Instagram caption in ENGLISH for these p
 
 albums = {}
 album_tasks = {}
+
+# --- Render ke jinda rakhar jonno choto web server ---
+web_app = Flask(__name__)
+@web_app.route('/')
+def home():
+    return "Roopkatha Bot is Live!"
+
+def run_web():
+    port = int(os.environ.get("PORT", 10000))
+    web_app.run(host="0.0.0.0", port=port)
 
 async def make_caption(imgs):
     response = client.models.generate_content(model="gemini-3.5-flash-lite", contents=[PROMPT] + imgs)
@@ -147,8 +158,14 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     await update.message.reply_text("Photo pathao, ami caption baniye debo.")
 
-app = Application.builder().token(os.getenv("TELEGRAM_BOT_TOKEN")).build()
-app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-app.add_handler(MessageHandler(filters.TEXT, handle_text))
-print("Bot cholche...")
-app.run_polling()
+def main():
+    token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
+    app = Application.builder().token(token).build()
+    app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
+    app.add_handler(MessageHandler(filters.TEXT, handle_text))
+    print("Bot cholche...")
+    app.run_polling()
+
+if __name__ == "__main__":
+    threading.Thread(target=run_web, daemon=True).start()
+    main()
