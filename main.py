@@ -1,5 +1,6 @@
 import os, io, asyncio, re, threading
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from PIL import Image
 from dotenv import load_dotenv
 from flask import Flask
@@ -11,6 +12,8 @@ from google import genai
 load_dotenv()
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 PROMPT = "Write a SHORT Roopkatha style Instagram caption in ENGLISH for these photos. Max 2 lines caption, very sweet and catchy. Then 1 line CTA - DM to order. Then only 6 hashtags. Do NOT write long story, keep it short. Only English."
+
+IST = ZoneInfo("Asia/Kolkata")
 
 albums = {}
 album_tasks = {}
@@ -66,27 +69,32 @@ def parse_time(text):
     hour = int(m.group(1)); minute = int(m.group(2) or 0); ap = m.group(3)
     if ap == "pm" and hour != 12: hour += 12
     if ap == "am" and hour == 12: hour = 0
-    now = datetime.now()
+    # FIX: Render UTC te chole, tai Kolkata time dhore hisab korchi
+    now = datetime.now(IST)
     target = now.replace(hour=hour, minute=minute, second=0, microsecond=0)
     if "kal" in text or "tomorrow" in text: target += timedelta(days=1)
     if target <= now: target += timedelta(days=1)
     return (target - now).total_seconds()
 
 async def scheduled_post(chat_id, context, delay_sec, time_text):
-    await asyncio.sleep(delay_sec)
-    caption = context.application.bot_data.get(f"caption_{chat_id}", "Roopkatha")
-    song = context.application.bot_data.get(f"song_{chat_id}", "")
-    album = context.application.bot_data.get(f"last_album_{chat_id}", [])
-    if song:
-        await context.bot.send_message(chat_id, f"⏰ DRAFT READY! {time_text} hoye geche.\n\n📝 Ebar Insta khule post kor:")
-        for b in album:
-            await context.bot.send_photo(chat_id, photo=io.BytesIO(b))
-        await context.bot.send_message(chat_id, f"🎵 Gaan: {song}\n\n📝 Caption:\n{caption}\n\n👉 Insta app e giye ei photo gulo select kor -> Gaan add kor: {song} -> Caption paste kor -> Post!")
+    try:
+        await asyncio.sleep(delay_sec)
+        caption = context.application.bot_data.get(f"caption_{chat_id}", "Roopkatha")
+        song = context.application.bot_data.get(f"song_{chat_id}", "")
+        album = context.application.bot_data.get(f"last_album_{chat_id}", [])
+        if song:
+            await context.bot.send_message(chat_id, f"⏰ DRAFT READY! {time_text} hoye geche.\n\n📝 Ebar Insta khule post kor:")
+            for b in album:
+                await context.bot.send_photo(chat_id, photo=io.BytesIO(b))
+            await context.bot.send_message(chat_id, f"🎵 Gaan: {song}\n\n📝 Caption:\n{caption}\n\n👉 Insta app e giye ei photo gulo select kor -> Gaan add kor: {song} -> Caption paste kor -> Post!")
+            context.application.bot_data[f"state_{chat_id}"] = "done"
+            return
+        result = post_carousel_to_instagram(album, caption)
+        await context.bot.send_message(chat_id, f"⏰ {time_text} e auto post hoye gelo! ✅\n{result}")
         context.application.bot_data[f"state_{chat_id}"] = "done"
-        return
-    result = post_carousel_to_instagram(album, caption)
-    await context.bot.send_message(chat_id, f"⏰ {time_text} e auto post hoye gelo! ✅\n{result}")
-    context.application.bot_data[f"state_{chat_id}"] = "done"
+    except Exception as e:
+        await context.bot.send_message(chat_id, f"Post korte giye problem holo: {e}")
+        context.application.bot_data[f"state_{chat_id}"] = "done"
 
 async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat_id = update.effective_chat.id
@@ -120,8 +128,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 for b in album: await update.message.reply_photo(photo=io.BytesIO(b))
                 await update.message.reply_text(f"🎵 Gaan: {song}\n\n📝 Caption:\n{caption}")
             else:
-                result = post_carousel_to_instagram(album, caption)
-                await update.message.reply_text(f"✅ Auto post hoye geche!\n{result}")
+                try:
+                    result = post_carousel_to_instagram(album, caption)
+                    await update.message.reply_text(f"✅ Auto post hoye geche!\n{result}")
+                except Exception as e:
+                    await update.message.reply_text(f"Post korte giye problem holo: {e}")
             context.application.bot_data[f"state_{chat_id}"] = "done"
             return
         asyncio.create_task(scheduled_post(chat_id, context, delay, text))
