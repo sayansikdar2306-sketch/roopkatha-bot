@@ -159,6 +159,11 @@ async def handle_text(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("Photo pathao, ami caption baniye debo.")
 
 def main():
+    # FIX: Python 3.14 e event loop er error ta ekhan thekei aschilo
+    try:
+        asyncio.set_event_loop(asyncio.new_event_loop())
+    except Exception:
+        pass
     token = os.getenv("TELEGRAM_BOT_TOKEN") or os.getenv("TELEGRAM_TOKEN")
     app = Application.builder().token(token).build()
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
